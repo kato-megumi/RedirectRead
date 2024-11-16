@@ -50,22 +50,24 @@ VOID WINAPI SetConsole()
 }
 #endif
 
-// Function to read the target base path from a config file
-std::pair<std::wstring, std::wstring> ReadPathsFromConfig(const std::wstring& configFilePath) {
-    std::wifstream configFile(configFilePath);
-    std::wstring targetBasePath;
-    std::wstring redirectBasePath;
-    if (configFile.is_open()) {
-        std::getline(configFile, targetBasePath);
-        std::getline(configFile, redirectBasePath);
-        configFile.close();
-    }
-    return { targetBasePath, redirectBasePath };
-}
+
 //Normalize and expand environment variables
 std::wstring NormalizePath(const std::wstring& inputPath) {
+    WCHAR currentDir[MAX_PATH];
+    if (GetCurrentDirectoryW(MAX_PATH, currentDir) == 0) {
+        std::wcerr << L"Failed to get current directory. Error: " << GetLastError() << std::endl;
+        return L"";
+    }
+
+    std::wstring replacedPath = inputPath;
+    size_t pos = replacedPath.find(L"%cd%");
+    if (pos != std::wstring::npos) {
+        replacedPath.replace(pos, 4, currentDir);
+    }
+
+
     WCHAR expandedPath[MAX_PATH];
-    if (!ExpandEnvironmentStringsW(inputPath.c_str(), expandedPath, MAX_PATH)) {
+    if (!ExpandEnvironmentStringsW(replacedPath.c_str(), expandedPath, MAX_PATH)) {
         std::wcerr << L"Failed to expand environment strings. Error: " << GetLastError() << std::endl;
         return L"";
     }
@@ -77,6 +79,19 @@ std::wstring NormalizePath(const std::wstring& inputPath) {
     }
 
     return normalizedPath;
+}
+
+// Function to read the target base path from a config file
+std::pair<std::wstring, std::wstring> ReadPathsFromConfig(const std::wstring& configFilePath) {
+    std::wifstream configFile(configFilePath);
+    std::wstring targetBasePath;
+    std::wstring redirectBasePath;
+    if (configFile.is_open()) {
+        std::getline(configFile, targetBasePath);
+        std::getline(configFile, redirectBasePath);
+        configFile.close();
+    }
+    return { NormalizePath(targetBasePath), NormalizePath(redirectBasePath) };
 }
 
 // Pointer to the original CreateFileW function
@@ -116,16 +131,14 @@ HANDLE WINAPI HookedCreateFileW(
     if (lpFileName) {
         // Expand environment variables in the file name
 		std::wstring fullPath = NormalizePath(lpFileName);
-		std::wstring basePath = NormalizePath(BASE_PATH);
-		std::wstring redirectedBasePath = NormalizePath(REDIRECT_BASE_PATH);
 
         // Check if the path starts with the target base path
-        if (fullPath.rfind(basePath, 0) == 0) {
+        if (fullPath.rfind(BASE_PATH, 0) == 0) {
             // Get the relative path
-            std::wstring relativePath = fullPath.substr(basePath.length());
+            std::wstring relativePath = fullPath.substr(BASE_PATH.length());
 
             // Construct the new path
-            std::wstring redirectedPath = redirectedBasePath + L"\\" + relativePath;
+            std::wstring redirectedPath = REDIRECT_BASE_PATH + L"\\" + relativePath;
 
             // Replace the file path with the redirected path
             lpFileName = redirectedPath.c_str();
